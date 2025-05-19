@@ -19,8 +19,8 @@ class Actor(nn.Module):
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
 
-    def forward(self, input_ids_actor, attention_mask_actor):
-        outputs = self.bert(input_ids=input_ids_actor, attention_mask=attention_mask_actor)
+    def forward(self, input_ids, attention_mask):
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
         pooled_output = outputs.last_hidden_state[:, 0, :]
         hidden = self.classifier_activation(self.classifier_hidden(pooled_output))
         layers_log_probs = F.log_softmax(self.classifier_score(hidden), dim=-1)

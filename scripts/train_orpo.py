@@ -4,6 +4,7 @@ import torch
 import wandb
 import numpy as np
 from torch.optim import AdamW
+import datasets
 
 from code.llm import *
 from code.adapter import *
@@ -56,7 +57,7 @@ if __name__ == "__main__":
     actor_base_model = AutoModelForMaskedLM.from_pretrained(CONFIG["actor_base_model_name"])
     # No need to move actor_base_model to device here, Actor class will handle its copy
 
-    ds = load_dataset("Salesforce/xlam-function-calling-60k")
+    ds = datasets.load_dataset("Salesforce/xlam-function-calling-60k")
 
     adapter_path_template = f'/workspace/models/1_{CONFIG["run_id_adapters"]}/adapter_{{i}}.pth'
     llm_adapters = load_adapters(adapter_path_template, CONFIG["adapter_io_dim_explicit"], CONFIG["adapter_bottleneck_dim"], CONFIG["num_llm_layers_explicit"], CONFIG["device"])
