@@ -14,8 +14,8 @@ def load_llm(CONFIG):
     llm_model.eval() # Set LLM to eval mode by default
 
     # --- Update Config with Model Dimensions ---
-    CONFIG["num_llm_layers_explicit"] = len(llm_model.model.layers)
-    CONFIG["adapter_io_dim_explicit"] = llm_model.model.embed_tokens.weight.shape[-1]
+    CONFIG["num_llm_layers"] = len(llm_model.model.layers)
+    CONFIG["adapter_io_dim"] = llm_model.model.embed_tokens.weight.shape[-1]
     
     return llm_model, llm_tokenizer
 
