@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
+from torch.distributions import Normal
 
 from code.llm import *
 from code.adapter import *

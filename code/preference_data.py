@@ -1,18 +1,7 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForMaskedLM
-import json
 import random
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from datasets import load_dataset, Dataset as HuggingFaceDataset
-import wandb
-from tqdm import tqdm
-from copy import deepcopy
-import numpy as np
-from torch.optim import AdamW
-from torch.utils.data import Dataset, DataLoader
-from torch.distributions import Normal
-import math
+from datasets import Dataset as HuggingFaceDataset
+from torch.utils.data import Dataset
 
 
 def create_preference_dataset(samples_scenarios, ds):
