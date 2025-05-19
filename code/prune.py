@@ -1,3 +1,4 @@
+from copy import deepcopy
 
 
 class LLMPruner:
@@ -29,3 +30,10 @@ class LLMPruner:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._restore_original_layers() # Ensure restoration on exit
 
+
+def prune_layers(model, layer_idxs, adapters):
+    pruned_model = deepcopy(model)    
+    for layer_idx in layer_idxs:
+        #pruned_model.model.layers[layer_idx] = Identity()
+        pruned_model.model.layers[layer_idx] = deepcopy(adapters[layer_idx])
+    return pruned_model

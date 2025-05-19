@@ -19,21 +19,20 @@ def load_llm(CONFIG):
     
     return llm_model, llm_tokenizer
 
-def generate_prompt_str(sample, tokenizer_llm): # Renamed to avoid conflict, returns string
+def generate_prompt_str(sample, tokenizer_llm):
     messages = [{"role": "user", "content": sample['query']}]
     tools = json.loads(sample['tools'])
     return tokenizer_llm.apply_chat_template(messages, tools=tools, add_generation_prompt=True, tokenize=False)
 
-def tokenize_for_llm(sample, tokenizer_llm, device): # Renamed for clarity
+def tokenize_for_llm(sample, tokenizer_llm, device):
     messages = [{"role": "user", "content": sample['query']}]
     tools = json.loads(sample['tools'])
     return tokenizer_llm.apply_chat_template(
         messages, tools=tools, add_generation_prompt=True, return_dict=True, return_tensors="pt"
     ).to(device)
 
-def generate_llm_output(sample, model_llm, tokenizer_llm, device): # Renamed
-    # Assuming model_llm is already on the correct device(s) via device_map
-    inputs = tokenize_for_llm(sample, tokenizer_llm, model_llm.device) # Use model's device for inputs
+def generate_llm_output(sample, model_llm, tokenizer_llm, **_):
+    inputs = tokenize_for_llm(sample, tokenizer_llm, model_llm.device)
     input_len = inputs["input_ids"].shape[-1]
     with torch.no_grad():
         outputs = model_llm.generate(
