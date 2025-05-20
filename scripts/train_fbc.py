@@ -18,8 +18,8 @@ CONFIG = {
     "dataset": "Salesforce/xlam-function-calling-60k",
     "adapter_bottleneck_dim": 512,
     "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-    "offline_rl_path": "/workspace/offline-rl/offline_20_3500",
-    "run_id_adapters": '4vw4k59d',
+    "offline_rl_path": "/workspace/offline_rl/offline_20_5000",
+    "adapters_path": '/workspace/models/adapters/1_4vw4k59d',
     "actor_base_model_name": "answerdotai/ModernBERT-base",
     "actor_head_hidden_dim": 256,
     "actor_max_seq_length": 128,
@@ -37,7 +37,7 @@ if __name__ == "__main__":
     llm_model, llm_tokenizer = load_llm(CONFIG)
     ds = load_dataset(CONFIG["dataset"])
 
-    adapter_path_template = f'/workspace/models/1_{CONFIG["run_id_adapters"]}/adapter_{{i}}.pth'
+    adapter_path_template = f'{CONFIG["adapters_path"]}/adapter_{{i}}.pth'
     llm_adapters = load_adapters(adapter_path_template, CONFIG["adapter_io_dim"], CONFIG["adapter_bottleneck_dim"], CONFIG["num_llm_layers"], CONFIG["device"])
 
     offline_dataset_hf = HuggingFaceDataset.load_from_disk(CONFIG["offline_rl_path"])

@@ -38,10 +38,9 @@ def load_adapters(adapter_path_template, adapter_io_dim, adapter_bottleneck_dim,
         Adapter(adapter_io_dim, adapter_bottleneck_dim).to(device=device, dtype=torch.bfloat16)
         for _ in range(num_llm_layers)
     ]
-    print(f"Attempting to load adapters from paths like: {adapter_path_template.format(i=0)}")
     for i, adapter_module in enumerate(llm_adapters):
         adapter_module.load_state_dict(torch.load(adapter_path_template.format(i=i), map_location=device))
-    return nn.ModuleList(llm_adapters) # Important for them to be proper model submodules if needed later
+    return nn.ModuleList(llm_adapters)
 
 def train_adapters(adapters, ds, num_layers, tokenizer, model, num_samples, device, lr):
     optimizers = [torch.optim.Adam(adapters[i].parameters(), lr=lr) for i in range(num_layers)]
