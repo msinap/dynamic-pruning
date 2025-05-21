@@ -25,6 +25,8 @@ class Actor(nn.Module):
         hidden = self.classifier_activation(self.classifier_hidden(pooled_output))
         layers_log_probs = F.log_softmax(self.classifier_score(hidden), dim=-1)
         mu_ratio = torch.sigmoid(self.classifier_ratio_mu(hidden))
-        log_std_ratio = torch.clamp(self.classifier_ratio_log_std(hidden), self.log_std_min, self.log_std_max)
+        # Smooth approximation of clamp using sigmoid
+        raw_log_std = self.classifier_ratio_log_std(hidden)
+        log_std_ratio = self.log_std_min + (self.log_std_max - self.log_std_min) * torch.sigmoid(raw_log_std)
         return layers_log_probs, mu_ratio, log_std_ratio
     

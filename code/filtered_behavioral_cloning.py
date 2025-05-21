@@ -125,10 +125,5 @@ def train_fbc(
         if not is_eval:
             actor_optimizer.zero_grad()
             loss.backward()
-            # Debug gradients
-            for name, param in actor.named_parameters():
-                if param.grad is not None:
-                    if 'ratio_log_std' in name:
-                        print(f"Gradient for {name}: {param.grad.item():.6f}")
             actor_optimizer.step()
 
