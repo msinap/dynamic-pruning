@@ -4,100 +4,15 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from torch.distributions import Normal
+from tqdm import tqdm
+import wandb
+import os
 
 from code.llm import *
 from code.adapter import *
 from code.preference_data import *
 from code.actor import *
 from code.evaluation import *
-from code.prune import *
-
-def get_pruning_action_from_actor(
-    actor_model_eval, actor_input_text, tokenizer_actor,
-    num_total_llm_layers, max_seq_len_actor, current_device
-    ):
-    actor_model_eval.eval() # Ensure actor is in eval mode
-    tokenized = tokenizer_actor(
-        actor_input_text, truncation=True, padding='max_length',
-        max_length=max_seq_len_actor, return_tensors="pt"
-    )
-    input_ids_actor = tokenized.input_ids.to(current_device)
-    attention_mask_actor = tokenized.attention_mask.to(current_device)
-
-    with torch.no_grad():
-        layers_log_probs, mu_ratio, _ = actor_model_eval(input_ids_actor, attention_mask_actor)
-
-    mu_ratio_scalar = mu_ratio.squeeze().item()
-    k_pruned = int(round(mu_ratio_scalar * num_total_llm_layers))
-    k_pruned = max(0, min(k_pruned, num_total_llm_layers)) # Clamp k
-
-    layer_scores = layers_log_probs.squeeze() # No need for exp if just taking topk
-    
-    if k_pruned > 0:
-        _, top_k_indices = torch.topk(layer_scores, k_pruned)
-        pruned_indices_list = top_k_indices.cpu().tolist()
-    else:
-        pruned_indices_list = []
-        
-    return pruned_indices_list, k_pruned, mu_ratio_scalar
-
-def run_orpo_evaluation_epoch(
-    actor_model_eval, model_llm_eval, tokenizer_llm_eval, pruner_llm,
-    dataset_llm_eval, tokenizer_actor_eval, num_total_llm_layers,
-    max_seq_len_actor_eval, current_device, epoch, batch_num_actor
-    ):
-    print(f"\n--- Running ORPO Evaluation after Epoch {epoch}, Actor Batch {batch_num_actor} ---")
-    actor_model_eval.eval()
-    model_llm_eval.eval() # Ensure LLM is in eval mode
-
-    total_eval_score = 0.0
-    total_k_pruned = 0
-    total_mu_ratio = 0.0
-    num_eval_samples_processed = 0
-
-    for i in tqdm(range(len(dataset_llm_eval)), desc="ORPO Eval"):
-        sample = dataset_llm_eval[i]
-        
-        # Actor input: Use same format as preference data
-        # actor_input_text_eval = generate_prompt_str(sample, tokenizer_llm_eval) # Option 1: LLM prompt style
-        actor_input_text_eval = sample['tools'] + '\n' + sample['query'] # Option 2: Preference data style
-
-        pruned_layer_indices, k_val, mu_ratio_val = get_pruning_action_from_actor(
-            actor_model_eval, actor_input_text_eval, tokenizer_actor_eval,
-            num_total_llm_layers, max_seq_len_actor_eval, current_device
-        )
-        
-        pruner_llm.prune_model(pruned_layer_indices)
-        
-        llm_generated_output = generate_llm_output(sample, model_llm_eval, tokenizer_llm_eval, current_device)
-        
-        pruner_llm._restore_original_layers() # Important to restore for next sample / training
-
-        score = calc_score(llm_generated_output, sample['answers'])
-
-        total_eval_score += score
-        total_k_pruned += k_val
-        total_mu_ratio += mu_ratio_val
-        num_eval_samples_processed += 1
-
-    avg_eval_score = total_eval_score / num_eval_samples_processed if num_eval_samples_processed > 0 else 0
-    avg_k_pruned = total_k_pruned / num_eval_samples_processed if num_eval_samples_processed > 0 else 0
-    avg_mu_ratio = total_mu_ratio / num_eval_samples_processed if num_eval_samples_processed > 0 else 0
-
-    print(f"Avg Evaluation Score: {avg_eval_score:.4f}")
-    print(f"Avg k Pruned: {avg_k_pruned:.2f}, Avg Pred. Mu Ratio: {avg_mu_ratio:.4f}")
-
-    if wandb.run:
-        wandb.log({
-            "eval/avg_score": avg_eval_score,
-            "eval/avg_k_pruned": avg_k_pruned,
-            "eval/avg_mu_ratio": avg_mu_ratio,
-            "orpo_epoch_eval": epoch, # Distinguish from training epoch
-            "orpo_batch_eval": batch_num_actor
-        })
-    
-    actor_model_eval.train() # Set actor back to train mode
-    return avg_eval_score
 
 def get_action_log_probs(
     pred_layers_log_probs, pred_mu_ratio, pred_log_std_ratio,
@@ -125,12 +40,14 @@ def get_action_log_probs(
     return log_prob_ratio + log_prob_layers_selection
 
 def train_orpo_actor(
-    actor_model, train_pref_dataset, num_total_llm_layers_train,
-    # For evaluation
-    model_llm_train, tokenizer_llm_train, adapters_llm_train, eval_dataset_llm, tokenizer_actor_train,
-    # Configs
-    epochs_actor, batch_size_actor, lr_actor, beta_orpo_actor, current_device,
-    max_seq_len_actor_train, eval_config_batches, gradient_clip
+        actor_model, train_pref_dataset, num_total_llm_layers_train,
+        # For evaluation
+        model_llm_train, tokenizer_llm_train, adapters_llm_train, eval_dataset_llm, tokenizer_actor_train,
+        # Configs
+        epochs_actor, batch_size_actor, lr_actor, beta_orpo_actor, current_device,
+        max_seq_len_actor_train, eval_config_batches, gradient_clip, checkpoints_path,
+        # Logging
+        verbose
     ):
     actor_model.to(current_device)
     actor_model.train()
@@ -181,7 +98,8 @@ def train_orpo_actor(
             if torch.isinf(log_probs_winner).any() or torch.isnan(log_probs_winner).any() or \
                torch.isinf(log_probs_loser).any() or torch.isnan(log_probs_loser).any():
                 print(f"Warning: NaN/Inf in log_probs at epoch {epoch_idx+1}, batch {batch_idx+1}. Skipping batch.")
-                wandb.log({"warning_nan_inf_log_probs": 1})
+                if wandb.run:
+                    wandb.log({"warning_nan_inf_log_probs": 1})
                 continue
 
             preference_term = -F.logsigmoid(log_probs_winner - log_probs_loser)
@@ -190,7 +108,8 @@ def train_orpo_actor(
 
             if torch.isnan(loss_actor) or torch.isinf(loss_actor):
                 print(f"Warning: Loss is NaN/Inf at epoch {epoch_idx+1}, batch {batch_idx+1}. Skipping batch.")
-                wandb.log({"warning_nan_inf_loss": 1})
+                if wandb.run:
+                    wandb.log({"warning_nan_inf_loss": 1})
                 continue
 
             loss_actor.backward()
@@ -201,6 +120,31 @@ def train_orpo_actor(
             total_loss_epoch_actor += loss_actor.item()
             processed_batches_actor +=1
             
+            if verbose and (batch_idx % 10 == 0): # Print every 10 batches or as needed
+                print(f"  Batch {batch_idx+1} Training Details:")
+                # Detailed logging for the first item in the batch as an example
+                print(f"    Input Text (first in batch): {tokenizer_actor_train.decode(input_ids_actor_b[0], skip_special_tokens=True)[:100]}...")
+                print(f"    Predicted mu_ratio (first in batch): {pred_mu_ratio_b[0].item():.4f}")
+                # pred_layers_log_probs_b is (batch_size, num_layers)
+                # layers_log_probs_winner_first = pred_layers_log_probs_b[0][winner_layers_list_b[0]].cpu().tolist() if winner_ks_b[0].item() > 0 else []
+                # layers_log_probs_loser_first = pred_layers_log_probs_b[0][loser_layers_list_b[0]].cpu().tolist() if loser_ks_b[0].item() > 0 else []
+                
+                print(f"    Winner Details (first in batch):")
+                print(f"      Target k: {winner_ks_b[0].item()}, Target Ratio: {winner_ratios_b[0].item():.4f}")
+                print(f"      Target Layers: {winner_layers_list_b[0].cpu().tolist() if winner_ks_b[0].item() > 0 else '[]'}")
+                print(f"      Log Prob Winner: {log_probs_winner[0].item():.4f}")
+                # print(f"      Log Probs for Chosen Winner Layers: {layers_log_probs_winner_first}")
+
+                print(f"    Loser Details (first in batch):")
+                print(f"      Target k: {loser_ks_b[0].item()}, Target Ratio: {loser_ratios_b[0].item():.4f}")
+                print(f"      Target Layers: {loser_layers_list_b[0].cpu().tolist() if loser_ks_b[0].item() > 0 else '[]'}")
+                print(f"      Log Prob Loser: {log_probs_loser[0].item():.4f}")
+                # print(f"      Log Probs for Chosen Loser Layers: {layers_log_probs_loser_first}")
+
+                print(f"    Preference Term (batch mean): {preference_term.mean().item():.4f}")
+                print(f"    SFT Term (batch mean): {sft_term.mean().item():.4f}")
+                print(f"    Total Loss (batch mean): {loss_actor.item():.4f}")
+
             if wandb.run:
                 wandb.log({
                     "train/orpo_loss_batch": loss_actor.item(),
@@ -212,17 +156,16 @@ def train_orpo_actor(
 
             # --- Periodic Evaluation ---
             if eval_config_batches > 0 and (batch_idx + 1) % eval_config_batches == 0:
-                current_eval_score = run_orpo_evaluation_epoch(
+                current_eval_score = run_evaluation_epoch(
                     actor_model, model_llm_train, tokenizer_llm_train, pruner_for_eval,
                     eval_dataset_llm, tokenizer_actor_train, num_total_llm_layers_train,
-                    max_seq_len_actor_train, current_device, epoch_idx + 1, batch_idx + 1
+                    max_seq_len_actor_train, current_device, epoch_idx + 1, batch_idx + 1, verbose
                 )
                 if current_eval_score > best_eval_score:
                     best_eval_score = current_eval_score
                     print(f"New best evaluation score: {best_eval_score:.4f}. Saving actor model.")
                     torch.save(actor_model.state_dict(), "best_orpo_actor_model.pth")
-                    wandb.save("best_orpo_actor_model.pth") # Save to wandb
-                actor_model.train() # Ensure actor is back in train mode
+                actor_model.train()
 
         avg_epoch_loss_actor = total_loss_epoch_actor / processed_batches_actor if processed_batches_actor > 0 else 0
         print(f"--- ORPO Actor Epoch {epoch_idx+1} finished. Average Loss: {avg_epoch_loss_actor:.4f} ---")
@@ -231,16 +174,16 @@ def train_orpo_actor(
         
         # --- End of Epoch Evaluation (if not done per batch) ---
         if eval_config_batches == 0: # Eval at end of epoch
-            current_eval_score = run_orpo_evaluation_epoch(
+            current_eval_score = run_evaluation_epoch(
                 actor_model, model_llm_train, tokenizer_llm_train, pruner_for_eval,
                 eval_dataset_llm, tokenizer_actor_train, num_total_llm_layers_train,
-                max_seq_len_actor_train, current_device, epoch_idx + 1, len(dataloader_actor)
+                max_seq_len_actor_train, current_device, epoch_idx + 1, len(dataloader_actor), verbose
             )
             if current_eval_score > best_eval_score:
                 best_eval_score = current_eval_score
                 print(f"New best evaluation score: {best_eval_score:.4f}. Saving actor model.")
-                torch.save(actor_model.state_dict(), "best_orpo_actor_model.pth")
-                wandb.save("best_orpo_actor_model.pth")
+                os.makedirs(checkpoints_path, exist_ok=True)
+                torch.save(actor_model.state_dict(), os.path.join(checkpoints_path, f"epoch_{epoch_idx+1}"))
             actor_model.train()
 
 

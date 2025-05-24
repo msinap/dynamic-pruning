@@ -3,7 +3,6 @@ from tqdm import tqdm
 from datasets import Dataset
 
 from code.llm import *
-from code.prune import *
 from code.adapter import *
 from code.evaluation import *
 

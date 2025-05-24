@@ -10,7 +10,7 @@ from code.adapter import *
 from code.preference_data import *
 from code.actor import *
 from code.evaluation import *
-from code.prune import *
+
 
 def get_pruning_action_from_actor(
     actor_model_eval, actor_input_text, tokenizer_actor,
