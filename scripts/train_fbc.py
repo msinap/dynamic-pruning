@@ -5,12 +5,12 @@ import torch
 from datasets import Dataset as HuggingFaceDataset
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 
-from code.llm import *
-from code.adapter import *
-from code.offline_rl_data import *
-from code.evaluation import *
-from code.filtered_behavioral_cloning import *
-from code.actor import *
+from src.llm import *
+from src.adapter import *
+from src.offline_rl_data import *
+from src.evaluation import *
+from src.filtered_behavioral_cloning import *
+from src.actor import *
 
 CONFIG = {
     "llm_model_name": "Salesforce/xLAM-2-1b-fc-r",

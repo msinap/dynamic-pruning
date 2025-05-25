@@ -2,8 +2,8 @@ import json
 import torch
 from tqdm import tqdm
 import wandb
-from code.llm import generate_llm_output
-from code.actor import get_pruning_action_from_actor
+from src.llm import generate_llm_output
+from src.actor import get_pruning_action_from_actor
 import time # Added for timing
 
 

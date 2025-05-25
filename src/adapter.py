@@ -6,7 +6,7 @@ import math
 import wandb
 from tqdm import tqdm
 
-from code.llm import tokenize_for_llm
+from src.llm import tokenize_for_llm
 
 class Adapter(nn.Module):
     def __init__(self, io_dim, bottleneck_dim):

@@ -8,11 +8,11 @@ from tqdm import tqdm
 import wandb
 import os
 
-from code.llm import *
-from code.adapter import *
-from code.preference_data import *
-from code.actor import *
-from code.evaluation import *
+from src.llm import *
+from src.adapter import *
+from src.preference_data import *
+from src.actor import *
+from src.evaluation import *
 
 def get_action_log_probs(
     pred_layers_log_probs, pred_mu_ratio, pred_log_std_ratio,

@@ -5,11 +5,11 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from torch.distributions import Normal
 
-from code.llm import *
-from code.adapter import *
-from code.preference_data import *
-from code.actor import *
-from code.evaluation import *
+from src.llm import *
+from src.adapter import *
+from src.preference_data import *
+from src.actor import *
+from src.evaluation import *
 
 
 def get_pruning_action_from_actor(

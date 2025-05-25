@@ -3,10 +3,10 @@ from datasets import load_dataset
 import numpy as np
 import torch
 
-from code.llm import *
-from code.adapter import *
-from code.offline_rl_data import *
-from code.evaluation import *
+from src.llm import *
+from src.adapter import *
+from src.offline_rl_data import *
+from src.evaluation import *
 
 CONFIG = {
     "llm_model_name": "Salesforce/xLAM-2-1b-fc-r",

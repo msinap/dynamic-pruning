@@ -2,9 +2,9 @@ import random
 from tqdm import tqdm
 from datasets import Dataset
 
-from code.llm import *
-from code.adapter import *
-from code.evaluation import *
+from src.llm import *
+from src.adapter import *
+from src.evaluation import *
 
 
 def process_scenarios(offline_dataset_list):

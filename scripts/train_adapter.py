@@ -4,8 +4,8 @@ from datasets import load_dataset
 import numpy as np
 import torch
 
-from code.llm import *
-from code.adapter import *
+from src.llm import *
+from src.adapter import *
 
 CONFIG = {
     "llm_model_name": "Salesforce/xLAM-2-1b-fc-r",

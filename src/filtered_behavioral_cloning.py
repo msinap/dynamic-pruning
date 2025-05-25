@@ -3,9 +3,9 @@ import torch
 import math
 import torch.nn.functional as F
 from torch.distributions import Normal
-from code.llm import *
-from code.adapter import *
-from code.evaluation import *
+from src.llm import *
+from src.adapter import *
+from src.evaluation import *
 
 # TODO: wandb, eval in training, batch, dataloader, 
 

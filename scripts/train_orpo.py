@@ -5,12 +5,12 @@ import wandb
 import numpy as np
 import datasets
 
-from code.llm import *
-from code.adapter import *
-from code.offline_rl_data import *
-from code.preference_data import *
-from code.actor import *
-from code.orpo import *
+from src.llm import *
+from src.adapter import *
+from src.offline_rl_data import *
+from src.preference_data import *
+from src.actor import *
+from src.orpo import *
 
 CONFIG = {
     "llm_model_name": "Salesforce/xLAM-2-1b-fc-r",
