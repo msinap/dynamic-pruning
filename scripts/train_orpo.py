@@ -3,7 +3,6 @@ import random
 import torch
 import wandb
 import numpy as np
-from torch.optim import AdamW
 import datasets
 
 from code.llm import *
@@ -19,7 +18,7 @@ CONFIG = {
     "adapter_bottleneck_dim": 512,
     "adapters_path": '/workspace/1_4vw4k59d', # For loading pre-trained adapters
     "offline_rl_dataset_path": "/workspace/offline_20_5000",
-    "train_dataset_ratio": 0.01,
+    "train_dataset_ratio": 1.0,
     "actor_head_hidden_dim": 256,
     "actor_max_seq_length": 128,
     "orpo_epochs": 5,
@@ -29,14 +28,14 @@ CONFIG = {
     "num_llm_eval_samples": 50,
     "eval_every_n_batches": 0, # 0 means eval at end of epoch. >0 means eval every N batches.
     "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-    "wandb_enabled": False,
+    "wandb_enabled": True,
     "wandb_project": "orpo_pruning_with_eval",
     "wandb_run_id": f"orpo_eval_run_{random.randint(1000,9999)}",
     "log_std_max": -3,
     "log_std_min": -7,
     "gradient_clip_norm": 1.0,
     "seed": 23,
-    "verbose": True,
+    "verbose": False,
 }
 
 # --- Reproducibility ---

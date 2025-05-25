@@ -1,0 +1,10 @@
+torch
+ipykernel 
+datasets 
+transformers 
+jupyter 
+ipywidgets 
+accelerate 
+wandb 
+outlines 
+seaborn
