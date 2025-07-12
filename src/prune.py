@@ -1,20 +1,20 @@
 from copy import deepcopy
 import torch.nn as nn
 
-# def prune_layers(model, layer_idxs, adapters=None):
-#     """
-#     Prune the layers of the model.
-#     If adapters are provided, use them to replace the layers.
-#     If adapters are not provided, use Identity() to replace the layers.
-#     """
-#     pruned_model = deepcopy(model)
-#     for layer_idx in layer_idxs:
-#         if adapters:
-#             pruned_model.model.layers[layer_idx] = deepcopy(adapters[layer_idx])
-#         else:
-#             pruned_model.model.layers[layer_idx] = nn.Identity()
+def prune_layers(model, layer_idxs, adapters=None):
+    """
+    Prune the layers of the model.
+    If adapters are provided, use them to replace the layers.
+    If adapters are not provided, use Identity() to replace the layers.
+    """
+    pruned_model = deepcopy(model)
+    for layer_idx in layer_idxs:
+        if adapters:
+            pruned_model.model.layers[layer_idx] = deepcopy(adapters[layer_idx])
+        else:
+            pruned_model.model.layers[layer_idx] = nn.Identity()
         
-#     return pruned_model
+    return pruned_model
 
 class LLMPruner:
     """

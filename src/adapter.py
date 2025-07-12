@@ -49,7 +49,8 @@ def load_adapters(
     ]
     for i, adapter_module in enumerate(llm_adapters):
         adapter_module.load_state_dict(torch.load(adapter_path_template.format(i=i), map_location=device))
-    return nn.ModuleList(llm_adapters)
+        adapter_module.to(device, dtype=torch.bfloat16)
+    return llm_adapters
 
 def train_adapters(
     adapters,

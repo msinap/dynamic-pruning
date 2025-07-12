@@ -44,6 +44,7 @@ if __name__ == "__main__":
         verbose=False,
     )
     print(f"Scores: {scores}") # exact_match: 0.69, json_match: 0.71, ratio_function_calls: 0.78
+    # Scores: {'exact_match_score': 0.5757575757575758, 'json_match_score': 0.6363636363636364, 'ratio_function_calls_score': 0.7272727272727273}
 
     adapters = [Adapter(CONFIG["llm_hidden_dim"], CONFIG["adapter_bottleneck_dim"]).to(device="cuda", dtype=torch.bfloat16) for _ in range(CONFIG["llm_num_layers"])]
     train_adapters(
@@ -57,6 +58,7 @@ if __name__ == "__main__":
         eval_dataset=test_dataset,
         verbose=False,
     )
+    # https://wandb.ai/sina-team/adapter-training/runs/1951
 
     save_adapters(
         adapters=adapters,
