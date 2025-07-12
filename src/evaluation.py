@@ -10,6 +10,18 @@ def json_match_score(output, answer):
     except json.JSONDecodeError:
         return 0
 
+def ratio_function_calls_score(output, answer):
+    try:
+        output_json = json.loads(output)
+        answer_json = json.loads(answer)
+        match_count = 0
+        for function_call in answer_json:
+            if function_call in output_json:
+                match_count += 1
+        return match_count / len(answer_json)
+    except json.JSONDecodeError:
+        return 0
+
 def evaluate_model_on_dataset(model, tokenizer, dataset, score_funcs, verbose=False):
     total_scores = {score_func.__name__: 0 for score_func in score_funcs}
     for i, sample in enumerate(dataset):

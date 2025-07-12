@@ -14,9 +14,8 @@ def load_llm(CONFIG):
     )
     llm_model.eval() # Set LLM to eval mode by default
 
-    # --- Update Config with Model Dimensions ---
-    CONFIG["num_llm_layers"] = len(llm_model.model.layers)
-    CONFIG["adapter_io_dim"] = llm_model.model.embed_tokens.weight.shape[-1]
+    CONFIG["llm_num_layers"] = len(llm_model.model.layers)
+    CONFIG["llm_hidden_dim"] = llm_model.model.embed_tokens.weight.shape[-1]
     
     return llm_model, llm_tokenizer
 
@@ -32,7 +31,7 @@ def tokenize_for_llm(sample, tokenizer_llm, device):
         messages, tools=tools, add_generation_prompt=True, return_dict=True, return_tensors="pt"
     ).to(device)
 
-def generate_llm_output(sample, model_llm, tokenizer_llm, return_token_count=False, **_):
+def generate_llm_output(sample, model_llm, tokenizer_llm, output_hidden_states=False):
     inputs = tokenize_for_llm(sample, tokenizer_llm, model_llm.device)
     input_len = inputs["input_ids"].shape[-1]
     with torch.no_grad():
@@ -40,12 +39,15 @@ def generate_llm_output(sample, model_llm, tokenizer_llm, return_token_count=Fal
             **inputs,
             max_new_tokens=150,
             num_return_sequences=1,
+            output_hidden_states=output_hidden_states,
+            return_dict_in_generate=True,
         )
-    output_ids = outputs[0][input_len:]
+    output_ids = outputs.sequences[0][input_len:]
     output_text = tokenizer_llm.decode(output_ids, skip_special_tokens=True)
-    if return_token_count:
-        return output_text, len(output_ids)
-    return output_text
+    if output_hidden_states:
+        return output_text, outputs.hidden_states
+    else:
+        return output_text
 
 def load_and_split_dataset(dataset_name, test_size=10):
     dataset = load_dataset(dataset_name)['train']
