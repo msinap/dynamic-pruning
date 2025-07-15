@@ -34,7 +34,10 @@ if __name__ == "__main__":
     )
 
     llm_model, llm_tokenizer = load_llm(CONFIG)
-    test_dataset, train_dataset = load_and_split_dataset(CONFIG["dataset_name"], test_size=CONFIG["dataset_test_size"])
+    test_dataset, train_dataset = load_and_split_dataset(
+        CONFIG["dataset_name"],
+        test_size=CONFIG["dataset_test_size"],
+    )
 
     scores = evaluate_model_on_dataset(
         model=llm_model,

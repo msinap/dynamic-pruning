@@ -52,3 +52,6 @@ def generate_llm_output(sample, model_llm, tokenizer_llm, output_hidden_states=F
 def load_and_split_dataset(dataset_name, test_size):
     dataset = load_dataset(dataset_name)['train']
     return dataset.select(range(len(dataset) - test_size, len(dataset))), dataset.select(range(len(dataset) - test_size))
+
+def load_dataset_list(dataset_name):
+    return load_dataset(dataset_name)['train'].to_list()

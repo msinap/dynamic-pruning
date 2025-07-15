@@ -1,0 +1,74 @@
+import random
+import numpy as np
+import torch
+from datasets import Dataset
+
+from src.llm import load_llm, load_dataset_list
+from src.adapter import load_adapters
+from src.preference_data_generation import split_train_test, get_dataloader, PreferenceDataset
+from src.preference_data_training import train_router_with_dpo
+from src.router import get_router_and_tokenizer
+
+CONFIG = {
+    "llm_model_name": "Salesforce/xLAM-2-1b-fc-r",
+    "dataset_name": "Salesforce/xlam-function-calling-60k",
+    "preference_dataset_path": "/workspace/datasets/preference_dataset_dfs_5000_samples_20_scenarios_all_pairs",
+
+    "router_base_model_name": "answerdotai/ModernBERT-base",
+    "router_head_hidden_dim": 256,
+    "router_log_std_min": -7,
+    "router_log_std_max": -3,
+    
+    "adapter_bottleneck_dim": 64,
+
+    "num_samples": 5000,
+    "scenarios_per_num_pruned_layers": 5,
+    "stop_adding_layers_threshold": 0.1,
+    "batch_size": 12,
+}
+
+device = torch.device("cuda")
+seed = 23
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)
+
+
+if __name__ == "__main__":
+    print("Loading LLM, dataset")
+    llm_model, llm_tokenizer = load_llm(CONFIG)
+    dataset = load_dataset_list(CONFIG["dataset_name"])
+
+    print("Loading adapters")
+    llm_adapters = load_adapters(
+        adapter_path_template=f'/workspace/models/adapter/1951/adapter_{{i}}.pth',
+        adapter_io_dim=CONFIG["llm_hidden_dim"],
+        adapter_bottleneck_dim=CONFIG["adapter_bottleneck_dim"],
+        num_llm_layers=CONFIG["llm_num_layers"],
+        device=device,
+    )
+
+    print("Loading router")
+    router, router_tokenizer = get_router_and_tokenizer(
+        router_base_model_name=CONFIG["router_base_model_name"],
+        head_hidden_dim=CONFIG["router_head_hidden_dim"],
+        num_llm_layers_actor=CONFIG["llm_num_layers"],
+        log_std_min=CONFIG["router_log_std_min"],
+        log_std_max=CONFIG["router_log_std_max"],
+        device=device,
+    )
+
+    print("Loading preference dataset")
+    preference_dataset_list = Dataset.load_from_disk(CONFIG["preference_dataset_path"]).to_list()
+    random.shuffle(preference_dataset_list)
+    preference_dataset = PreferenceDataset(preference_dataset_list, dataset)
+    preference_dataloader = get_dataloader(preference_dataset, CONFIG["batch_size"], router_tokenizer)
+
+    train_router_with_dpo(
+        router=router,
+        train_dataloader=preference_dataloader,
+    )
+
+    
