@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from copy import deepcopy
-from transformers import AutoModelForMaskedLM, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,17 +17,17 @@ def get_router_and_tokenizer(
     log_std_max: float,
     device: torch.device,
 ):
-    router_base_model = AutoModelForMaskedLM.from_pretrained(router_base_model_name).to(device, dtype=torch.bfloat16)
+    router_base_model = AutoModel.from_pretrained(router_base_model_name).to(device, dtype=torch.bfloat16)
     router_tokenizer = AutoTokenizer.from_pretrained(router_base_model_name)
     router = Router(
-        base_bert_model=router_base_model.model,
+        base_bert_model=router_base_model, #.model,
         head_hidden_dim=head_hidden_dim,
         num_llm_layers=num_llm_layers_actor,
         log_std_min=log_std_min,
         log_std_max=log_std_max,
     ).to(device, dtype=torch.bfloat16)
-    for param in router.bert.parameters():
-        param.requires_grad = False
+    # for param in router.bert.parameters():
+    #     param.requires_grad = False
     return router, router_tokenizer
 
 
@@ -42,10 +42,11 @@ class Router(nn.Module):
         super(Router, self).__init__()
         self.config = deepcopy(base_bert_model.config)
         self.bert = deepcopy(base_bert_model)
+        self.num_llm_layers = num_llm_layers
 
         self.layers_hidden = nn.Linear(self.config.hidden_size, head_hidden_dim)
         self.layers_activation = nn.ReLU()
-        self.layers_score = nn.Linear(head_hidden_dim, num_llm_layers)
+        self.layers_score = nn.Linear(head_hidden_dim, self.num_llm_layers)
         
         self.ratio_hidden = nn.Linear(self.config.hidden_size, head_hidden_dim)
         self.ratio_activation = nn.ReLU()
@@ -56,8 +57,12 @@ class Router(nn.Module):
 
     def forward(self, input_ids, attention_mask):
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        # Use the average of token's representation
-        pooled_output = outputs.last_hidden_state.mean(dim=1)
+        # mean pooling
+        #pooled_output = outputs.last_hidden_state.mean(dim=1)
+        token_embeddings = outputs[0] #First element of model_output contains all token embeddings
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size())
+        pooled_output = torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+        pooled_output = pooled_output.to(torch.bfloat16)
         
         hidden_layers = self.layers_activation(self.layers_hidden(pooled_output))
         layers_scores = F.sigmoid(self.layers_score(hidden_layers))

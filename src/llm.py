@@ -3,6 +3,8 @@ import json
 import torch
 from datasets import load_dataset
 
+from src.prune import LLMPruner
+
 # --- LLM Utilities ---
 def load_llm(CONFIG):
     # --- Model and Tokenizer Loading ---
@@ -49,6 +51,29 @@ def generate_llm_output(sample, model_llm, tokenizer_llm, output_hidden_states=F
     else:
         return output_text
 
+def generate_llm_output_with_pruning(sample, model_llm, tokenizer_llm, adapters, router, tokenizer_router, verbose=False):
+    inputs = tokenizer_router(sample['query'], return_tensors="pt", padding=True, truncation=True, return_token_type_ids=False).to(router.bert.device)
+    with torch.no_grad():
+        layers_scores, mu_ratio, log_std_ratio = router(**inputs)
+    
+    std_ratio = torch.exp(log_std_ratio)
+    ratio_dist = torch.distributions.Normal(mu_ratio, std_ratio)
+    ratio = ratio_dist.sample().item()
+    num_pruned_layers = int(ratio * len(model_llm.model.layers))
+    pruned_layers = torch.topk(layers_scores, num_pruned_layers).indices.tolist()[0]
+
+    if verbose:
+        # print(f"Pruning {num_pruned_layers} layers")
+        print(f"Pruned layers: {pruned_layers}")
+        # print(f"Ratio: {ratio}")
+        # print(f"Mu ratio: {mu_ratio}")
+        # print(f"Std ratio: {std_ratio}")
+        # print(f"Layers scores: {layers_scores}")
+
+    with LLMPruner(model_llm, adapters) as pruner:
+        pruner.prune_model(pruned_layers)
+        return generate_llm_output(sample, model_llm, tokenizer_llm)
+    
 def load_and_split_dataset(dataset_name, test_size):
     dataset = load_dataset(dataset_name)['train']
     return dataset.select(range(len(dataset) - test_size, len(dataset))), dataset.select(range(len(dataset) - test_size))

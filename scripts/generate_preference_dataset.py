@@ -23,11 +23,11 @@ if __name__ == "__main__":
     offline_dfs_dataset = Dataset.load_from_disk(CONFIG["offline_dfs_dataset_path"]).to_list()
 
 
-    # preference_dataset = generate_preference_dataset(
-    #     offline_random_dataset,
-    #     generate_all_pairs,
-    # )
-    # Dataset.from_list(preference_dataset).save_to_disk(f"/workspace/datasets/preference_dataset_{CONFIG['offline_random_dataset_path'].split('/')[-1]}_all_pairs")
+    preference_dataset = generate_preference_dataset(
+        offline_random_dataset,
+        generate_all_pairs,
+    )
+    Dataset.from_list(preference_dataset).save_to_disk(f"/workspace/datasets/preference_dataset_{CONFIG['offline_random_dataset_path'].split('/')[-1]}_all_pairs")
     
     preference_dataset = generate_preference_dataset(
         offline_dfs_dataset,

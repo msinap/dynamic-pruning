@@ -3,7 +3,8 @@ import numpy as np
 import torch
 from datasets import Dataset
 
-from src.llm import load_llm, load_dataset_list
+from src.llm import load_llm, load_dataset_list, generate_llm_output_with_pruning
+from src.evaluation import partial_match_score, ratio_function_calls_score, json_match_score
 from src.adapter import load_adapters
 from src.preference_data_generation import split_train_test, get_dataloader, PreferenceDataset
 from src.preference_data_training import train_router_with_dpo
@@ -12,10 +13,11 @@ from src.router import get_router_and_tokenizer
 CONFIG = {
     "llm_model_name": "Salesforce/xLAM-2-1b-fc-r",
     "dataset_name": "Salesforce/xlam-function-calling-60k",
+    "dataset_eval_size": 20,
     "preference_dataset_path": "/workspace/datasets/preference_dataset_dfs_5000_samples_20_scenarios_all_pairs",
 
-    "router_base_model_name": "answerdotai/ModernBERT-base",
-    "router_head_hidden_dim": 256,
+    "router_base_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+    "router_head_hidden_dim": 128,
     "router_log_std_min": -7,
     "router_log_std_max": -3,
     
@@ -24,7 +26,7 @@ CONFIG = {
     "num_samples": 5000,
     "scenarios_per_num_pruned_layers": 5,
     "stop_adding_layers_threshold": 0.1,
-    "batch_size": 12,
+    "batch_size": 256,
 }
 
 device = torch.device("cuda")
@@ -40,10 +42,12 @@ if __name__ == "__main__":
     print("Loading LLM, dataset")
     llm_model, llm_tokenizer = load_llm(CONFIG)
     dataset = load_dataset_list(CONFIG["dataset_name"])
+    eval_dataset = dataset[-CONFIG["dataset_eval_size"]:]
+    train_dataset = dataset[:-CONFIG["dataset_eval_size"]]
 
     print("Loading adapters")
     llm_adapters = load_adapters(
-        adapter_path_template=f'/workspace/models/adapter/1951/adapter_{{i}}.pth',
+        adapter_path_template=f'/workspace/models/adapter/adapter_{{i}}.pth',
         adapter_io_dim=CONFIG["llm_hidden_dim"],
         adapter_bottleneck_dim=CONFIG["adapter_bottleneck_dim"],
         num_llm_layers=CONFIG["llm_num_layers"],
@@ -63,12 +67,20 @@ if __name__ == "__main__":
     print("Loading preference dataset")
     preference_dataset_list = Dataset.load_from_disk(CONFIG["preference_dataset_path"]).to_list()
     random.shuffle(preference_dataset_list)
-    preference_dataset = PreferenceDataset(preference_dataset_list, dataset)
+    preference_dataset = PreferenceDataset(preference_dataset_list, train_dataset)
     preference_dataloader = get_dataloader(preference_dataset, CONFIG["batch_size"], router_tokenizer)
 
+    print("Training router with DPO")
     train_router_with_dpo(
         router=router,
+        router_tokenizer=router_tokenizer,
+        learning_rate=1e-3,
         train_dataloader=preference_dataloader,
+        log_every_n_steps=10000,
+        eval_dataset=eval_dataset,
+        eval_every_n_steps=100,
+        llm_model=llm_model,
+        llm_tokenizer=llm_tokenizer,
+        adapters=llm_adapters,
+        score_funcs=[partial_match_score, ratio_function_calls_score, json_match_score],
     )
-
-    

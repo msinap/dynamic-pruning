@@ -5,18 +5,14 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from tqdm import tqdm
-import numpy as np
 
-from src.llm import generate_llm_output_with_pruning
-from src.prune import LLMPruner
 from src.router import Router
-from src.evaluation import evaluate_model_on_dataset, partial_match_score, ratio_function_calls_score, json_match_score
 
 
 class DifferentiableTopK(nn.Module):
     """
     Differentiable Top-K operator using the Sinkhorn algorithm.
-    This module takes a batch of 1-D scores and returns the log probability
+    This module takes a batch of 1-D scores and returns the soft probability
     for each element of being in the top-k.
 
     Args:
@@ -38,8 +34,8 @@ class DifferentiableTopK(nn.Module):
             scores (torch.Tensor): A tensor of scores of shape [batch_size, n].
 
         Returns:
-            torch.Tensor: A tensor of log probabilities of shape [batch_size, n],
-                          where each element log_p_i is the log probability of score_i
+            torch.Tensor: A tensor of probabilities of shape [batch_size, n],
+                          where each element p_i is the probability of score_i
                           being in the top-k.
         """
         # Ensure scores is 2D for batch processing
@@ -59,12 +55,15 @@ class DifferentiableTopK(nn.Module):
             log_P = log_P - torch.logsumexp(log_P, dim=-2, keepdim=True)
             log_P = log_P - torch.logsumexp(log_P, dim=-1, keepdim=True)
         
-        # --- Sum log probabilities for top-k ranks ---
-        # The log probability of element `i` being in the top-k is the log-sum-exp of its
-        # log probabilities of being in rank 0, 1, ..., k-1.
-        # These correspond to the first k columns of the log permutation matrix.
-        top_k_log_probs = torch.logsumexp(log_P[:, :, :self.k], dim=-1)
-        return top_k_log_probs
+        soft_permutation = torch.exp(log_P)
+        
+        # --- Sum probabilities for top-k ranks ---
+        # The probability of element `i` being in the top-k is the sum of its
+        # probabilities of being in rank 0, 1, ..., k-1.
+        # These correspond to the first k columns of the soft permutation matrix.
+        top_k_probs = torch.sum(soft_permutation[:, :, :self.k], dim=-1)
+
+        return top_k_probs
 
 
 def calculate_log_pi(
@@ -72,8 +71,7 @@ def calculate_log_pi(
     layers_scores: torch.Tensor,
     mu_ratio: torch.Tensor,
     log_std_ratio: torch.Tensor,
-    num_llm_layers: int,
-    verbose: bool = False,
+    num_llm_layers: int
 ) -> torch.Tensor:
     """
     Calculates the log probability of a batch of pruning actions (log_pi(y|x)).
@@ -100,10 +98,13 @@ def calculate_log_pi(
     # --- Part 1: Calculate log P(k | x) ---
     # `k` is the number of layers pruned for each item in the batch.
     k_batch = torch.tensor([len(p) for p in pruned_layers_batch], device=device, dtype=torch.float32).unsqueeze(1)
+    print("k_batch", k_batch)
 
     # Create the Normal distribution for the pruning ratio
     std_ratio = torch.exp(log_std_ratio)
     ratio_dist = torch.distributions.Normal(mu_ratio, std_ratio)
+    print("mu_ratio", mu_ratio)
+    print("std_ratio", std_ratio)
 
     # To get P(k), we find the probability that the continuous ratio `r` falls
     # into the bucket that corresponds to the integer `k`.
@@ -118,12 +119,7 @@ def calculate_log_pi(
 
     # calculate the log probability of the ratio
     log_prob_k = ratio_dist.log_prob(k_batch / num_llm_layers)
-
-    if verbose:
-        print("k_batch", k_batch)
-        print("mu_ratio", mu_ratio)
-        print("std_ratio", std_ratio)
-        print("log_prob_k", log_prob_k)
+    print("log_prob_k", log_prob_k)
 
     # --- Part 2: Calculate log P(layers | k, x) using DifferentiableTopK ---
     # We use the DifferentiableTopK to get the probability of each layer being in the top-k
@@ -137,61 +133,36 @@ def calculate_log_pi(
             continue
             
         # Create DifferentiableTopK for this specific k
-        differentiable_topk = DifferentiableTopK(k=k_i, epsilon=1e-1, n_iters=2)
+        differentiable_topk = DifferentiableTopK(k=k_i, epsilon=1e-2, n_iters=2)
         
         # Get the scores for this sample and apply DifferentiableTopK
         # layers_scores[i] has shape [num_total_layers]
-        sample_scores = layers_scores[i].unsqueeze(0)  # Add batch dimension    
-        top_k_log_probs = differentiable_topk(sample_scores)  # Shape: [1, num_total_layers]
-    
+        sample_scores = layers_scores[i].unsqueeze(0)  # Add batch dimension
+        top_k_probs = differentiable_topk(sample_scores)  # Shape: [1, num_total_layers]
+        
         # Get the indices of the pruned layers for the current sample
         indices = torch.tensor(pruned_layers_batch[i], device=device, dtype=torch.long)
         
-        # Gather the log probabilities for those specific layers
-        log_probs_for_pruned_layers = top_k_log_probs[0][indices]  # Shape: [k_i]
-        # add not pruned layers to the log probability (log(1-p) = log(1-exp(log_p)))
-        # Use numerically stable log1mexp function
-        def log1mexp(x):
-            """Numerically stable log(1-exp(x)) for x < 0"""
-            # For x < -log(2), use log1p(-exp(x))  => numerically stable
-            # For x >= -log(2), use log(-expm1(x))  => more accurate
-            mask = x < -torch.log(torch.tensor(2.0, device=x.device))
-            result = torch.zeros_like(x)
-            result[mask] = torch.log1p(-torch.exp(x[mask]))
-            result[~mask] = torch.log(-torch.expm1(x[~mask]))
-            return result
+        # Gather the probabilities for those specific layers
+        probs_for_pruned_layers = top_k_probs[0][indices]  # Shape: [k_i]
+        # add not pruned layers to the probability
+        probs_for_not_pruned_layers = 1.0 - top_k_probs[0][~indices]
+        probs_for_layers = torch.cat([probs_for_pruned_layers, probs_for_not_pruned_layers], dim=0)
         
-        # Create a mask for all layers that are NOT pruned
-        all_indices = torch.arange(top_k_log_probs.shape[1], device=device)
-        not_pruned_mask = ~torch.isin(all_indices, indices)
-        log_probs_for_not_pruned_layers = log1mexp(top_k_log_probs[0][not_pruned_mask])
-        log_probs_for_layers = torch.cat([log_probs_for_pruned_layers, log_probs_for_not_pruned_layers], dim=0)
-        
-        # Clamp the log probabilities to ensure stability (no value less than -10)
-        log_probs_for_layers = torch.clamp(log_probs_for_layers, min=-10.0)
+        print("probs_for_layers", probs_for_layers)
 
         # Calculate the log probability of selecting this specific set of layers
         # We use the product of individual probabilities (sum of log probabilities)
-        # log_probs_for_layers = torch.log(probs_for_layers + 1e-4)  # Add epsilon for numerical stability
+        log_probs_for_layers = torch.log(probs_for_layers + 1e-4)  # Add epsilon for numerical stability
         summed_log_probs = log_probs_for_layers.sum()
         log_prob_layers_list.append(summed_log_probs)
 
-        if verbose:
-            print("sample_scores", sample_scores)
-            print("top_k_log_probs", top_k_log_probs)
-            print("log_probs_for_pruned_layers", log_probs_for_pruned_layers)
-            print("log_probs_for_not_pruned_layers", log_probs_for_not_pruned_layers)
-            print("log_probs_for_layers", log_probs_for_layers)
-
     log_prob_layers = torch.stack(log_prob_layers_list).unsqueeze(1)
+    print("log_prob_layers", log_prob_layers)
     
     # --- Part 3: Combine ---
     # Total log probability is the sum of the two components.
     total_log_prob = log_prob_k + log_prob_layers
-    if verbose:
-        print("log_prob_layers", log_prob_layers)
-        print("log_prob_k", log_prob_k)
-        print("total_log_prob", total_log_prob)
     
     return total_log_prob
 
@@ -199,7 +170,6 @@ def calculate_log_pi(
 def dpo_loss_function(
     batch: Dict[str, Any],
     router: Router,
-    verbose: bool = False,
 ) -> torch.Tensor:
     """
     Computes the DPO loss for a batch of preference data.
@@ -211,71 +181,48 @@ def dpo_loss_function(
     )
     
     log_pi_winner = calculate_log_pi(
-        batch['winner_layers'], layers_scores, mu_ratio, log_std_ratio, router.num_llm_layers, verbose=verbose,
+        batch['winner_layers'], layers_scores, mu_ratio, log_std_ratio, router.num_llm_layers
     )
     log_pi_loser = calculate_log_pi(
-        batch['loser_layers'], layers_scores, mu_ratio, log_std_ratio, router.num_llm_layers, verbose=verbose,
+        batch['loser_layers'], layers_scores, mu_ratio, log_std_ratio, router.num_llm_layers
     )
+
+    print("log_pi_winner", log_pi_winner)
+    print("log_pi_loser", log_pi_loser)
     
     log_probs_diff = log_pi_winner - log_pi_loser
     loss = -F.logsigmoid(log_probs_diff).mean()
-    if verbose:
-        print("log_pi_winner", log_pi_winner)
-        print("log_pi_loser", log_pi_loser)
-        print("log_probs_diff", log_probs_diff)
-        print("loss", loss.item())
     return loss
 
     
 def train_router_with_dpo(
-    router,
-    router_tokenizer,
-
-    # training
-    learning_rate: float,
+    router: Router,
     train_dataloader: DataLoader,
-    log_every_n_steps: int,
-
-    # evaluation
-    eval_dataset: List[Dict[str, Any]],
-    eval_every_n_steps: int,
-    llm_model,
-    llm_tokenizer,
-    adapters,
-    score_funcs,
+    learning_rate: float = 1e-6,
+    epochs: int = 3,
 ):
     optimizer = AdamW(router.parameters(), lr=learning_rate)
 
     router.train()
-    for step, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader)):
-        optimizer.zero_grad()
-        verbose = True if step % log_every_n_steps == log_every_n_steps - 1 else False
-        loss = dpo_loss_function(batch, router, verbose=verbose)
-        loss.backward()
-        optimizer.step()
+    for epoch in tqdm(range(epochs), desc="Epochs"):
+        total_loss = 0
+        for step, batch in enumerate(train_dataloader):
+            optimizer.zero_grad()
 
-        if step % eval_every_n_steps == eval_every_n_steps - 1:
-            scores = {}
-            for sample in eval_dataset:
-                output = generate_llm_output_with_pruning(
-                    sample=sample,
-                    model_llm=llm_model,
-                    tokenizer_llm=llm_tokenizer,
-                    adapters=adapters,
-                    router=router,
-                    tokenizer_router=router_tokenizer,
-                    verbose=True,
-                )
-                print(output)
-                print(sample['answers'])
-                for score_func in score_funcs:
-                    if score_func.__name__ not in scores:
-                        scores[score_func.__name__] = []
-                    score = score_func(output, sample['answers'])
-                    scores[score_func.__name__].append(score)
-                    print(f"{score_func.__name__}: {score:.4f}")
-                
-            for score_name, results in scores.items():
-                print(f"{score_name}: {np.mean(results):.4f}")
-            print("-" * 100)
+            # Compute DPO loss
+            loss = dpo_loss_function(batch, router)
+
+            # Backpropagation
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+            
+            print(f"Step {step + 1}/{len(train_dataloader)}, Loss: {loss.item():.4f}")
+
+            if step == 50:
+                exit()
+
+        avg_loss = total_loss / len(train_dataloader)
+        print(f"Epoch {epoch + 1} finished. Average Loss: {avg_loss:.4f}")
 

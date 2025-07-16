@@ -7,7 +7,7 @@ def exact_match_score(output, answer):
 def json_match_score(output, answer):
     try:
         return 1 if json.loads(output) == json.loads(answer) else 0
-    except json.JSONDecodeError:
+    except Exception:
         return 0
 
 def ratio_function_calls_score(output, answer):
@@ -19,7 +19,7 @@ def ratio_function_calls_score(output, answer):
             if function_call in output_json:
                 match_count += 1
         return match_count / len(answer_json)
-    except json.JSONDecodeError:
+    except Exception:
         return 0
 
 def partial_match_score(output_str, answer_str):
@@ -34,10 +34,8 @@ def partial_match_score(output_str, answer_str):
             if not isinstance(func_call['arguments'], dict): # Arguments must be a dict
                  return -5
             parsed_output[func_call['name']] = func_call['arguments']
-    except json.JSONDecodeError:
+    except Exception:
         return -5 # Cannot parse output
-    except TypeError: # Other parsing issues
-        return -5
 
     answer_json = json.loads(answer_str)
     if len(answer_json) == 0:
