@@ -12,7 +12,7 @@ from copy import deepcopy
 def get_router_and_tokenizer(
     router_base_model_name: str,
     head_hidden_dim: int,
-    num_llm_layers_actor: int,
+    num_llm_layers: int,
     log_std_min: float,
     log_std_max: float,
     device: torch.device,
@@ -22,7 +22,7 @@ def get_router_and_tokenizer(
     router = Router(
         base_bert_model=router_base_model, #.model,
         head_hidden_dim=head_hidden_dim,
-        num_llm_layers=num_llm_layers_actor,
+        num_llm_layers=num_llm_layers,
         log_std_min=log_std_min,
         log_std_max=log_std_max,
     ).to(device, dtype=torch.bfloat16)

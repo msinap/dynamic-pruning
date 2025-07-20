@@ -2,8 +2,8 @@
 
 ```bash
 # models
-huggingface-cli download sinap/dynamic-pruning --local-dir ./models/ --repo-type model
+huggingface-cli download sinap/dynamic-pruning --local-dir /workspace/models/ --repo-type model
 
 # datasets
-huggingface-cli download sinap/dynamic-pruning-offline-rl-data --local-dir ./datasets/ --repo-type dataset
+huggingface-cli download sinap/dynamic-pruning-offline-rl-data --local-dir /workspace/datasets/ --repo-type dataset
 ```
