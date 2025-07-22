@@ -67,6 +67,17 @@ class DifferentiableTopK(nn.Module):
         return top_k_log_probs
 
 
+def log1mexp(x: torch.Tensor) -> torch.Tensor:
+    """Numerically stable log(1-exp(x)) for x < 0"""
+    # For x < -log(2), use log1p(-exp(x))  => numerically stable
+    # For x >= -log(2), use log(-expm1(x))  => more accurate
+    mask = x < -torch.log(torch.tensor(2.0, device=x.device))
+    result = torch.zeros_like(x)
+    result[mask] = torch.log1p(-torch.exp(x[mask]))
+    result[~mask] = torch.log(-torch.expm1(x[~mask]))
+    return result
+
+
 def calculate_log_pi(
     pruned_layers_batch: List[List[int]],
     layers_scores: torch.Tensor,
@@ -151,15 +162,6 @@ def calculate_log_pi(
         log_probs_for_pruned_layers = top_k_log_probs[0][indices]  # Shape: [k_i]
         # add not pruned layers to the log probability (log(1-p) = log(1-exp(log_p)))
         # Use numerically stable log1mexp function
-        def log1mexp(x):
-            """Numerically stable log(1-exp(x)) for x < 0"""
-            # For x < -log(2), use log1p(-exp(x))  => numerically stable
-            # For x >= -log(2), use log(-expm1(x))  => more accurate
-            mask = x < -torch.log(torch.tensor(2.0, device=x.device))
-            result = torch.zeros_like(x)
-            result[mask] = torch.log1p(-torch.exp(x[mask]))
-            result[~mask] = torch.log(-torch.expm1(x[~mask]))
-            return result
         
         # Create a mask for all layers that are NOT pruned
         all_indices = torch.arange(top_k_log_probs.shape[1], device=device)
@@ -227,7 +229,78 @@ def dpo_loss_function(
     return loss
 
     
-def train_router_with_dpo(
+def orpo_loss_function(
+    batch: Dict[str, Any],
+    router: Router,
+    *,
+    orpo_alpha: float,
+    fbc_alpha: float,
+    verbose: bool = False,
+) -> torch.Tensor:
+    """
+    Computes the ORPO loss for a batch of preference data.
+    ORPO combines a preference loss based on odds ratio with an SFT loss on the winning examples.
+    """
+    layers_scores, mu_ratio, log_std_ratio = router(
+        input_ids=batch['input_ids'].to(router.bert.device),
+        attention_mask=batch['attention_mask'].to(router.bert.device),
+    )
+
+    # Calculate log probabilities for winner and loser actions
+    log_pi_winner = calculate_log_pi(
+        batch['winner_layers'], layers_scores, mu_ratio, log_std_ratio, router.num_llm_layers, verbose=verbose,
+    )
+    log_pi_loser = calculate_log_pi(
+        batch['loser_layers'], layers_scores, mu_ratio, log_std_ratio, router.num_llm_layers, verbose=verbose,
+    )
+
+    # --- Odds Ratio Preference Loss Part ---
+    # log_odds = log(p / (1-p)) = log(p) - log(1-p)
+    # Here, p = exp(log_pi), so log(1-p) = log(1-exp(log_pi)) = log1mexp(log_pi)
+    log_odds_winner = log_pi_winner - log1mexp(log_pi_winner)
+    log_odds_loser = log_pi_loser - log1mexp(log_pi_loser)
+
+    log_odds_ratio = log_odds_winner - log_odds_loser
+    preference_loss = -F.logsigmoid(log_odds_ratio).mean()
+
+    # --- SFT Loss Part (on winner data, inspired by fbc_loss_function) ---
+    device = layers_scores.device
+    num_llm_layers = router.num_llm_layers
+    batch_size = layers_scores.shape[0]
+
+    # Construct tensors for winner ratio and layer pruning
+    winner_ratios = torch.tensor(
+        [len(p) / num_llm_layers for p in batch['winner_layers']], 
+        device=device, 
+        dtype=mu_ratio.dtype
+    ).unsqueeze(1)
+    
+    winner_is_layer_pruned_list = []
+    for i in range(batch_size):
+        is_pruned_tensor = torch.zeros(num_llm_layers, device=device, dtype=layers_scores.dtype)
+        if batch['winner_layers'][i]:
+            pruned_indices = torch.tensor(batch['winner_layers'][i], device=device, dtype=torch.long)
+            is_pruned_tensor.scatter_(0, pruned_indices, 1.0)
+        winner_is_layer_pruned_list.append(is_pruned_tensor)
+    winner_is_layer_pruned = torch.stack(winner_is_layer_pruned_list)
+
+    # Calculate MSE losses for SFT component
+    mu_loss = F.mse_loss(mu_ratio, winner_ratios)
+    layers_scores_loss = F.mse_loss(layers_scores, winner_is_layer_pruned)
+    sft_loss = mu_loss + layers_scores_loss * fbc_alpha
+
+    # --- Combine Preference and SFT losses ---
+    loss = preference_loss + orpo_alpha * sft_loss
+
+    if verbose:
+        print("preference_loss", preference_loss.item())
+        print("sft_loss", sft_loss.item())
+        print("total orpo_loss", loss.item())
+        
+    return loss
+
+
+def train_router_with_preference_optimization(
     router,
     router_tokenizer,
 
@@ -235,6 +308,8 @@ def train_router_with_dpo(
     learning_rate: float,
     train_dataloader: DataLoader,
     log_every_n_steps: int,
+    loss_fn,
+    loss_fn_kwargs: Dict[str, Any],
 
     # evaluation
     eval_dataset: List[Dict[str, Any]],
@@ -250,7 +325,7 @@ def train_router_with_dpo(
     for step, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader)):
         optimizer.zero_grad()
         verbose = True if step % log_every_n_steps == log_every_n_steps - 1 else False
-        loss = dpo_loss_function(batch, router, verbose=verbose)
+        loss = loss_fn(batch, router, verbose=verbose, **loss_fn_kwargs)
         loss.backward()
         optimizer.step()
 

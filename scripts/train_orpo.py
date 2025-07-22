@@ -7,7 +7,7 @@ from src.llm import load_llm, load_dataset_list, generate_llm_output_with_prunin
 from src.evaluation import partial_match_score, ratio_function_calls_score, json_match_score
 from src.adapter import load_adapters
 from src.preference_data_generation import split_train_test, get_dataloader, PreferenceDataset
-from src.preference_data_training import train_router_with_preference_optimization, dpo_loss_function
+from src.preference_data_training import train_router_with_preference_optimization, orpo_loss_function
 from src.router import get_router_and_tokenizer
 
 CONFIG = {
@@ -27,6 +27,8 @@ CONFIG = {
     "scenarios_per_num_pruned_layers": 5,
     "stop_adding_layers_threshold": 0.1,
     "batch_size": 256,
+    "orpo_alpha": 0.1,
+    "fbc_alpha": 0.01,
 }
 
 device = torch.device("cuda")
@@ -70,19 +72,22 @@ if __name__ == "__main__":
     preference_dataset = PreferenceDataset(preference_dataset_list, train_dataset)
     preference_dataloader = get_dataloader(preference_dataset, CONFIG["batch_size"], router_tokenizer)
 
-    print("Training router with DPO")
+    print("Training router with ORPO")
     train_router_with_preference_optimization(
         router=router,
         router_tokenizer=router_tokenizer,
         learning_rate=1e-3,
         train_dataloader=preference_dataloader,
         log_every_n_steps=10000,
-        loss_fn=dpo_loss_function,
-        loss_fn_kwargs={},
+        loss_fn=orpo_loss_function,
+        loss_fn_kwargs={
+            "orpo_alpha": CONFIG["orpo_alpha"],
+            "fbc_alpha": CONFIG["fbc_alpha"],
+        },
         eval_dataset=eval_dataset,
         eval_every_n_steps=100,
         llm_model=llm_model,
         llm_tokenizer=llm_tokenizer,
         adapters=llm_adapters,
         score_funcs=[partial_match_score, ratio_function_calls_score, json_match_score],
-    )
+    ) 
