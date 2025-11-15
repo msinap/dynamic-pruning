@@ -1,3 +1,29 @@
+"""
+Router Training with Direct Preference Optimization (DPO)
+
+This script trains the router model using DPO, a preference-based reinforcement
+learning method. The router learns to prefer pruning configurations that maintain
+accuracy while maximizing layer pruning.
+
+Usage:
+    python scripts/train_dpo.py
+
+The script will:
+    1. Load pre-trained LLM and adapters
+    2. Initialize router model
+    3. Load preference dataset (pairs of pruning configurations)
+    4. Train router using DPO loss
+    5. Periodically evaluate on test set
+
+DPO Training:
+    - Learns from pairwise preferences between pruning configurations
+    - Optimizes the likelihood ratio between preferred and non-preferred actions
+    - More stable than standard RL methods (no separate reward model needed)
+
+Configuration:
+    Edit the CONFIG dictionary to customize training parameters.
+"""
+
 import random
 import numpy as np
 import torch

@@ -1,3 +1,32 @@
+"""
+Router Training with Odds Ratio Preference Optimization (ORPO)
+
+This script trains the router model using ORPO, which combines preference learning
+with supervised fine-tuning on winning examples. ORPO uses odds ratios instead of
+likelihood ratios for more stable training.
+
+Usage:
+    python scripts/train_orpo.py
+
+The script will:
+    1. Load pre-trained LLM and adapters
+    2. Initialize router model
+    3. Load preference dataset (pairs of pruning configurations)
+    4. Train router using ORPO loss (preference + SFT)
+    5. Periodically evaluate on test set
+
+ORPO Training:
+    - Combines preference optimization with supervised learning
+    - Uses odds ratios for more stable gradients
+    - Includes SFT loss on winning configurations
+    - Often converges faster than pure DPO
+
+Configuration:
+    Edit the CONFIG dictionary to customize:
+    - orpo_alpha: Weight for SFT loss component
+    - fbc_alpha: Weight for layer scores in SFT loss
+"""
+
 import random
 import numpy as np
 import torch

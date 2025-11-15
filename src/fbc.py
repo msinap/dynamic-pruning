@@ -1,3 +1,22 @@
+"""
+Filtered Behavioral Cloning (FBC) for Router Training
+
+This module implements Filtered Behavioral Cloning, a supervised learning approach
+for training the router model. FBC trains on successful pruning configurations
+observed from offline exploration, filtering out poor-performing scenarios.
+
+Key Components:
+    - BehaviorDataset: PyTorch dataset for behavioral cloning data
+    - fbc_loss_function: MSE-based loss for supervised router training
+    - train_fbc: Training loop with evaluation
+    - filter_behavior_dataset: Various filtering strategies for selecting good behaviors
+
+Training Approach:
+    The router learns to directly predict successful pruning configurations
+    (which layers to prune and how many) from offline data collected by
+    systematically exploring the pruning space.
+"""
+
 from typing import List, Dict, Any
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
