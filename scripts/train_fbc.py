@@ -1,3 +1,29 @@
+"""
+Router Training with Filtered Behavioral Cloning (FBC)
+
+This script trains the router model using FBC, a supervised learning approach that
+learns from successful pruning configurations discovered through offline exploration.
+
+Usage:
+    python scripts/train_fbc.py
+
+The script will:
+    1. Load pre-trained LLM and adapters
+    2. Initialize router model
+    3. Load and filter offline behavior dataset
+    4. Train router using supervised MSE loss
+    5. Periodically evaluate on test set
+
+FBC Training:
+    - Learns directly from successful pruning configurations
+    - Uses MSE loss on layer scores and pruning ratios
+    - Simpler and more stable than RL-based methods
+    - Good baseline for comparison with preference methods
+
+Configuration:
+    Edit the CONFIG dictionary to customize training parameters.
+"""
+
 import torch
 import random
 import numpy as np

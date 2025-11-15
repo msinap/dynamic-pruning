@@ -1,3 +1,22 @@
+"""
+Preference Data Generation for Router Training
+
+This module generates preference pairs from offline exploration data for training
+the router with preference optimization methods (DPO, ORPO). It converts raw
+pruning scenarios into pairwise comparisons.
+
+Key Functions:
+    - generate_preference_dataset: Create preference pairs from offline data
+    - compare_scenarios: Compare two pruning scenarios to determine preference
+    - generate_all_pairs: Generate all pairwise comparisons
+    - generate_random_pairs: Sample random pairwise comparisons
+
+Preference Criteria:
+    Scenario A is preferred over B if:
+    1. A has higher accuracy score, OR
+    2. Same accuracy but A prunes more layers (more efficient)
+"""
+
 import random
 from typing import List, Dict, Any
 from torch.utils.data import Dataset, DataLoader

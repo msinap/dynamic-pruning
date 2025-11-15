@@ -1,12 +1,25 @@
+"""
+Router Model for Dynamic Layer Pruning
+
+This module implements a router model that decides which transformer layers to prune
+dynamically based on the input query. The router is based on a pre-trained BERT model
+and outputs both layer scores and a pruning ratio distribution.
+
+Key Components:
+    - Router: Neural network that predicts which layers to prune
+    - get_router_and_tokenizer: Factory function for creating router and tokenizer
+
+Router Architecture:
+    - Base: Pre-trained BERT model (e.g., MiniLM)
+    - Layer Head: Predicts importance scores for each layer
+    - Ratio Head: Predicts distribution parameters (mu, log_std) for pruning ratio
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from copy import deepcopy
 from transformers import AutoModel, AutoTokenizer
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from copy import deepcopy
 
 
 def get_router_and_tokenizer(
@@ -17,6 +30,21 @@ def get_router_and_tokenizer(
     log_std_max: float,
     device: torch.device,
 ):
+    """
+    Create and initialize a router model with its tokenizer.
+    
+    Args:
+        router_base_model_name (str): HuggingFace identifier for base model
+            Example: 'sentence-transformers/all-MiniLM-L6-v2'
+        head_hidden_dim (int): Hidden dimension for prediction heads (e.g., 128)
+        num_llm_layers (int): Number of layers in the target LLM
+        log_std_min (float): Minimum log std for ratio distribution (e.g., -7)
+        log_std_max (float): Maximum log std for ratio distribution (e.g., -3)
+        device: Target device for router
+        
+    Returns:
+        tuple: (router, router_tokenizer)
+    """
     router_base_model = AutoModel.from_pretrained(router_base_model_name).to(device, dtype=torch.bfloat16)
     router_tokenizer = AutoTokenizer.from_pretrained(router_base_model_name)
     router = Router(
@@ -56,6 +84,19 @@ class Router(nn.Module):
         self.log_std_max = log_std_max
 
     def forward(self, input_ids, attention_mask):
+        """
+        Forward pass to predict layer pruning strategy.
+        
+        Args:
+            input_ids: Tokenized input IDs
+            attention_mask: Attention mask for input
+            
+        Returns:
+            tuple: (layers_scores, mu_ratio, log_std_ratio)
+                - layers_scores: [batch, num_layers] importance scores (0-1, higher = prune)
+                - mu_ratio: [batch, 1] mean of pruning ratio distribution
+                - log_std_ratio: [batch, 1] log std of pruning ratio distribution
+        """
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
         # mean pooling
         #pooled_output = outputs.last_hidden_state.mean(dim=1)

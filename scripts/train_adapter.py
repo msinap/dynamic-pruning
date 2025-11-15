@@ -1,3 +1,27 @@
+"""
+Adapter Training Script
+
+This script trains lightweight adapter modules to replace transformer layers in an LLM.
+Each adapter learns to mimic its corresponding layer's behavior through knowledge
+distillation from the full model's hidden states.
+
+Usage:
+    python scripts/train_adapter.py
+
+The script will:
+    1. Load a pre-trained LLM (default: xLAM-2-1b-fc-r)
+    2. Evaluate the original model performance
+    3. Train adapters for all layers using layer-wise distillation
+    4. Periodically evaluate adapter quality
+    5. Save trained adapters to disk
+
+Configuration:
+    Edit the CONFIG dictionary to customize:
+    - LLM model and dataset
+    - Training hyperparameters (lr, batch size, etc.)
+    - Adapter architecture (bottleneck dimension)
+"""
+
 import torch
 import random
 import numpy as np

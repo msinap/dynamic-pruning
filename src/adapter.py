@@ -1,3 +1,16 @@
+"""
+Adapter Module for Dynamic LLM Pruning
+
+This module provides lightweight adapter networks that can replace full transformer layers
+during inference. Adapters learn to mimic the behavior of their corresponding layers,
+enabling efficient layer pruning with minimal accuracy loss.
+
+Key Components:
+    - Adapter: Bottleneck adapter architecture with residual connections
+    - train_adapters: Training procedure using layer-wise distillation
+    - evaluate_adapters_separately: Evaluate each adapter's quality independently
+"""
+
 import os
 import torch
 import torch.nn as nn
@@ -11,6 +24,22 @@ from src.evaluation import json_match_score, evaluate_model_on_dataset, ratio_fu
 from src.prune import LLMPruner
 
 class Adapter(nn.Module):
+    """
+    Lightweight bottleneck adapter for replacing transformer layers.
+    
+    Architecture: Input -> Linear(down) -> ReLU -> Linear(up) -> Residual Add -> Output
+    
+    The adapter uses a bottleneck architecture to reduce parameters while maintaining
+    expressiveness. Weights are initialized to produce near-identity transformations
+    at the start of training.
+    
+    Args:
+        io_dim (int): Input and output dimension (should match layer hidden size)
+        bottleneck_dim (int): Dimension of the bottleneck layer (e.g., 64)
+        
+    Attributes:
+        attention_type (str): Required attribute for compatibility with Qwen2 models
+    """
     def __init__(self, io_dim, bottleneck_dim):
         super(Adapter, self).__init__()
         self.layer1 = nn.Linear(io_dim, bottleneck_dim)
@@ -27,6 +56,16 @@ class Adapter(nn.Module):
         nn.init.zeros_(self.layer2.bias)
 
     def forward(self, x, **_): # Match signature of LLM layer forward
+        """
+        Forward pass with residual connection.
+        
+        Args:
+            x: Input tensor or tuple of tensors (matches LLM layer output format)
+            **_: Additional keyword arguments (ignored, for compatibility)
+            
+        Returns:
+            tuple: Output tensor(s) in same format as input
+        """
         h = self.layer1(x[0] if isinstance(x, tuple) else x) # Handle tuple input from LLM layers
         h = self.relu(h)
         y = self.layer2(h)
@@ -43,6 +82,20 @@ def load_adapters(
     num_llm_layers,
     device,
 ):
+    """
+    Load pre-trained adapter modules from disk.
+    
+    Args:
+        adapter_path_template (str): Path template with {i} placeholder for layer index
+            Example: '/models/adapter/adapter_{i}.pth'
+        adapter_io_dim (int): Input/output dimension of adapters
+        adapter_bottleneck_dim (int): Bottleneck dimension of adapters
+        num_llm_layers (int): Number of layers in the LLM
+        device: Target device for adapter modules
+        
+    Returns:
+        list: List of loaded Adapter modules, one per layer
+    """
     llm_adapters = [
         Adapter(adapter_io_dim, adapter_bottleneck_dim)
         for _ in range(num_llm_layers)
@@ -63,6 +116,31 @@ def train_adapters(
     eval_dataset,
     verbose=False,
 ):
+    """
+    Train adapter modules using layer-wise knowledge distillation.
+    
+    This function trains adapters to mimic the input-output behavior of their
+    corresponding transformer layers. It only uses samples where the LLM produces
+    correct outputs, ensuring adapters learn good layer approximations.
+    
+    Training Strategy:
+        1. Generate LLM output with hidden states for a sample
+        2. Skip sample if LLM output is incorrect
+        3. For each layer, collect (input, output) pairs from all generation steps
+        4. Train adapter to minimize MSE between adapter output and layer output
+        5. Evaluate adapters periodically by pruning individual layers
+    
+    Args:
+        adapters (list): List of Adapter modules to train
+        train_dataset (list): Training samples with 'query', 'tools', 'answers'
+        num_layers (int): Number of layers in the LLM
+        tokenizer: LLM tokenizer
+        model: LLM model
+        lr (float): Learning rate for Adam optimizer
+        eval_every_n_steps (int): Evaluation frequency
+        eval_dataset: Dataset for evaluation
+        verbose (bool): If True, print detailed training information
+    """
     optimizers = [torch.optim.Adam(adapters[i].parameters(), lr=lr) for i in range(num_layers)]
     for step, sample in enumerate(tqdm(train_dataset, desc="Training adapters")):
         layers_input_output = [[] for _ in range(num_layers)]
@@ -105,11 +183,38 @@ def train_adapters(
 
 
 def save_adapters(adapters, run_id, path_template):
+    """
+    Save trained adapter modules to disk.
+    
+    Args:
+        adapters (list): List of trained Adapter modules
+        run_id (str): Unique identifier for this training run
+        path_template (str): Directory path template with {run_id} placeholder
+            Example: '/models/adapter/{run_id}'
+    """
     os.makedirs(f'{path_template.format(run_id=run_id)}', exist_ok=True)
     for i, adapter in enumerate(adapters):
         torch.save(adapter.state_dict(), f'{path_template.format(run_id=run_id)}/adapter_{i}.pth')
 
 def evaluate_adapters_separately(adapters, dataset, num_layers, tokenizer, model, verbose=False):
+    """
+    Evaluate the quality of each adapter by testing single-layer pruning.
+    
+    This function tests each adapter individually by replacing only that layer
+    and measuring the model's performance on a dataset. This helps identify
+    which layers can be safely pruned and which are more critical.
+    
+    Args:
+        adapters (list): List of trained Adapter modules
+        dataset: Evaluation dataset
+        num_layers (int): Number of layers in the LLM
+        tokenizer: LLM tokenizer
+        model: LLM model
+        verbose (bool): If True, print detailed evaluation information
+        
+    Returns:
+        list: Scores for each layer (higher = better adapter quality)
+    """
     scores = []
     for layer_idx in tqdm(range(num_layers), desc="Evaluating adapters"):
         if verbose:
